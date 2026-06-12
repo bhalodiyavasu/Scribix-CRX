@@ -554,7 +554,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (msg.type === 'SHOW_CHAT_ENTRY') {
-        appendMessage('user', msg.prompt);
+        if (window.activeWebpageLoadingBubble) {
+          window.activeWebpageLoadingBubble.remove();
+          window.activeWebpageLoadingBubble = null;
+        }
         if (msg.error) {
           appendMessage('assistant', `Error: ${msg.error}`);
         } else {
@@ -572,6 +575,17 @@ document.addEventListener('DOMContentLoaded', () => {
         userPromptInput.placeholder = 'Generating...';
         sendPromptBtn.disabled = false;
         sendPromptBtn.innerHTML = `<span class="icon-mask icon-stop icon-size-md"></span>`;
+
+        // Immediately show the user's prompt in the chat
+        appendMessage('user', generatingPrompt, false, true);
+        
+        // Show a loading shimmer message
+        if (window.activeWebpageLoadingBubble) {
+          window.activeWebpageLoadingBubble.remove();
+        }
+        window.activeWebpageLoadingBubble = appendMessage('assistant', '', true, false);
+
+        updateEmptyState();
         sendResponse({ success: true });
       }
 
@@ -582,6 +596,12 @@ document.addEventListener('DOMContentLoaded', () => {
         userPromptInput.placeholder = 'Ask anything...';
         sendPromptBtn.disabled = !userPromptInput.value.trim() || !activeContext;
         sendPromptBtn.innerHTML = `<span class="icon-mask icon-send icon-size-md"></span>`;
+
+        if (window.activeWebpageLoadingBubble) {
+          window.activeWebpageLoadingBubble.remove();
+          window.activeWebpageLoadingBubble = null;
+        }
+
         sendResponse({ success: true });
       }
     });
@@ -648,12 +668,14 @@ document.addEventListener('DOMContentLoaded', () => {
       sendPromptBtn.disabled = !userPromptInput.value.trim() || !activeContext;
       sendPromptBtn.innerHTML = `<span class="icon-mask icon-send icon-size-md"></span>`;
 
-      // Immediately append user prompt and termination message in chat
-      if (generatingPrompt) {
-        appendMessage('user', generatingPrompt);
-        appendMessage('assistant', 'Generation terminated.');
-        updateEmptyState();
+      if (window.activeWebpageLoadingBubble) {
+        window.activeWebpageLoadingBubble.remove();
+        window.activeWebpageLoadingBubble = null;
       }
+
+      // We already appended the user's prompt in INPUT_GENERATING_START, so we only append the termination message.
+      appendMessage('assistant', 'Generation terminated.');
+      updateEmptyState();
 
       // Tell content script to cancel generation
       if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
