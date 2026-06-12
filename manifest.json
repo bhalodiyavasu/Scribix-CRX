@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Content Enhancer",
+  "description": "AI-powered text enhancement and refactoring for input fields.",
+  "version": "1.0.0",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_icon": "icons/icon.png",
+    "default_title": "Content Enhancer"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "sidePanel",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "icons": {
+    "16": "icons/icon.png",
+    "48": "icons/icon.png",
+    "128": "icons/icon.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/icon.png",
+        "icons/logo.svg"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Content Enhancer</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+
+<body>
+  <!-- Toast notification -->
+  <div class="toast" id="status-toast">
+    <span class="icon-mask icon-check icon-size-sm"></span>
+    <span id="toast-text">Saved</span>
+  </div>
+
+  <!-- Main Container -->
+  <div class="app-shell">
+
+    <!-- ── CHAT PANEL ──────────────────────────────────────────────────────── -->
+    <div id="chat-panel" class="panel active">
+      <div class="topbar">
+        <div class="brand-small">Content Enhancer</div>
+        <div class="topbar-actions">
+          <button id="go-to-settings" class="icon-btn" title="Settings">
+            <span class="icon-mask icon-settings icon-size-xl"></span>
+          </button>
+          <button id="clear-chat-btn" class="icon-btn" title="New Chat">
+            <span class="icon-mask icon-clear icon-size-xl"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Active Input Target Context bar -->
+      <div id="target-context-bar" class="context-bar">
+        <span class="context-label">Target Field:</span>
+        <span id="target-field-name" class="context-value">None selected</span>
+      </div>
+
+      <!-- Scrollable Message Area (.chat-list) -->
+      <div id="chat-messages" class="chat-list">
+        <!-- Empty state logo screen -->
+        <div class="empty">
+          <img src="../icons/icon.png" width="40" height="40" style="opacity: 0.85; display: block;" alt="Mascot">
+        </div>
+      </div>
+
+      <!-- Bottom Chat Inputs (.composer-container) -->
+      <div class="composer-container">
+        <!-- Target Existing Value Preview -->
+        <div id="original-text-preview" class="original-preview-card hidden">
+          <div class="preview-header">
+            <span>Current Text</span>
+            <button id="clear-preview-btn" class="mini-close-btn" title="Clear Context">&times;</button>
+          </div>
+          <p id="original-text-content"></p>
+        </div>
+
+        <div class="chat-input-child">
+          <div class="chat-input">
+            <textarea id="user-prompt" rows="2" placeholder="Ask anything..."></textarea>
+          </div>
+
+          <div class="chat-input-actions">
+            <div class="chat-input-actions-left">
+              <!-- Simulated Model Select Dropdown Trigger -->
+              <div class="action-dot action-dot-model" id="composer-model-trigger" title="Active Model">
+                <div>
+                  <span class="icon-mask icon-model icon-size-xs"></span>
+                </div>
+                <span class="action-dot-model-text" id="composer-active-model">Select Model</span>
+              </div>
+            </div>
+
+            <div class="chat-input-actions-right">
+              <button id="send-prompt" class="send-btn" disabled title="Send">
+                <span class="icon-mask icon-send icon-size-md"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── SETTINGS PANEL ──────────────────────────────────────────────────── -->
+    <div id="settings-panel" class="panel">
+      <div class="topbar">
+        <button id="back-to-chat" class="icon-btn" title="Back to Chat">
+          <span class="icon-mask icon-back icon-size-lg"></span>
+        </button>
+        <span class="header-title">Settings</span>
+        <div style="width: 28px;"></div> <!-- Spacer for alignment -->
+      </div>
+
+      <div class="settings-content">
+        <div class="tab-pane">
+          <h2 class="pane-title">API Integration</h2>
+
+          <div class="settings-card">
+            <!-- Simulated Provider Dropdown -->
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-name">Provider</div>
+                <div class="setting-desc">Select the AI provider for chat completions</div>
+              </div>
+              <div class="setting-action" id="provider-dropdown-container">
+                <div class="ai-dropdown-trigger" id="provider-trigger">
+                  <span id="provider-selected-label">Google Gemini</span>
+                  <span class="chevron-icon icon-mask icon-chevron icon-size-sm"></span>
+                </div>
+                <div class="ai-dropdown-menu" id="provider-menu">
+                  <div class="ai-dropdown-item selected" data-value="GEMINI">
+                    <span>Google Gemini</span>
+                    <span class="check-icon icon-mask icon-check icon-size-sm"></span>
+                  </div>
+                  <div class="ai-dropdown-item" data-value="OPENROUTER">
+                    <span>OpenRouter</span>
+                    <span class="check-icon icon-mask icon-check icon-size-sm" style="display:none;"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- API Key Input -->
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-name">API Key</div>
+                <div class="setting-desc" id="api-key-desc">Your Google AI Studio API key</div>
+              </div>
+              <div class="setting-action">
+                <div class="api-key-input-wrap">
+                  <input type="password" id="crx-default-key" class="api-key-input" placeholder="Enter your API key">
+                  <button class="eye-btn" type="button" id="btn-toggle-default-key" title="Show/Hide">
+                    <span class="icon-mask icon-eye icon-size-sm"></span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Simulated Model Dropdown with Search -->
+            <div class="setting-row" style="border-bottom: none;">
+              <div class="setting-info">
+                <div class="setting-name">Model</div>
+                <div class="setting-desc" id="model-desc">Active model dynamically loaded from provider</div>
+              </div>
+              <div class="setting-action" id="model-dropdown-container">
+                <div class="ai-dropdown-trigger model-trigger" id="model-trigger">
+                  <span id="model-selected-label">Select model</span>
+                  <span class="chevron-icon icon-mask icon-chevron icon-size-sm"></span>
+                </div>
+                <div class="ai-dropdown-menu model-menu" id="model-menu">
+                  <div class="model-search-wrap">
+                    <span class="search-icon icon-mask icon-search icon-size-sm"></span>
+                    <input type="text" id="model-search-input" class="model-search-input"
+                      placeholder="Search models...">
+                  </div>
+                  <div class="model-list" id="model-list-container">
+                    <!-- Populated dynamically -->
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <script src="sidepanel.js"></script>
+</body>
+
+</html>
