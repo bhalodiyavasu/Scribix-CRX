@@ -5,7 +5,7 @@ const OPENROUTER_MODELS = ['openrouter/free', 'google/gemini-2.5-flash:free', 'm
 // ── Configure Side Panel Behavior ───────────────────────────────────────────
 if (typeof chrome !== 'undefined' && chrome.sidePanel && typeof chrome.sidePanel.setPanelBehavior === 'function') {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((err) => {
-    console.warn('[Content Enhancer Background] Failed to set panel behavior:', err);
+    console.warn('[Scribix Background] Failed to set panel behavior:', err);
   });
 }
 
@@ -31,7 +31,7 @@ chrome.action.onClicked.addListener(async (tab) => {
       chrome.tabs.sendMessage(tab.id, { type: 'SHOW_INDICATORS' }).catch(() => {});
     }
   } catch (e) {
-    console.error('[Content Enhancer Background]', e);
+    console.error('[Scribix Background]', e);
   }
 });
 
@@ -75,7 +75,7 @@ async function ensureContentScriptInjected(tabId) {
             files: ['content.js']
           });
         } catch (err) {
-          console.error('[Content Enhancer] Script injection failed:', err);
+          console.error('[Scribix] Script injection failed:', err);
           return false;
         }
       }
@@ -155,7 +155,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         })
         .then(() => sendResponse({ success: true }))
         .catch(err => {
-          console.error('[Content Enhancer] Failed to open side panel:', err);
+          console.error('[Scribix] Failed to open side panel:', err);
           sendResponse({ success: false, error: err.message });
         });
         return true;
@@ -238,7 +238,7 @@ Existing: "${msg.existingValue || ''}"`;
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${apiKey}`,
               'HTTP-Referer': 'https://github.com/vasubhalodiya',
-              'X-Title': 'Content Enhancer'
+              'X-Title': 'Scribix'
             },
             body: JSON.stringify({
               model: modelName,
@@ -267,7 +267,7 @@ Existing: "${msg.existingValue || ''}"`;
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: "enhance-field",
-    title: "Enhance with Content Enhancer",
+    title: "Enhance with Scribix",
     contexts: ["editable"]
   });
 });

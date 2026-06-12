@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Content Enhancer",
+  "name": "Scribix",
   "description": "AI-powered text enhancement and refactoring for input fields.",
   "version": "1.0.0",
   "background": {
@@ -8,7 +8,7 @@
   },
   "action": {
     "default_icon": "icons/icon.png",
-    "default_title": "Content Enhancer"
+    "default_title": "Scribix"
   },
   "permissions": [
     "activeTab",

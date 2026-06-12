@@ -24,7 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.storage.local.remove(`activeInputContext_${activeTabId}`, () => {
           chrome.runtime.sendMessage({ type: 'INJECT_AND_SHOW', tabId: activeTabId }, (res) => {
             if (chrome.runtime.lastError || !res?.success) {
-              console.warn('[Content Enhancer] Failed to inject/show via background:', chrome.runtime.lastError);
+              console.warn('[Scribix] Failed to inject/show via background:', chrome.runtime.lastError);
             }
           });
         });
@@ -588,7 +588,7 @@ document.addEventListener('DOMContentLoaded', () => {
           // Show indicators on the new active tab
           chrome.runtime.sendMessage({ type: 'INJECT_AND_SHOW', tabId: activeTabId }, (res) => {
             if (chrome.runtime.lastError || !res?.success) {
-              console.warn('[Content Enhancer] Failed to inject/show on tab change:', chrome.runtime.lastError);
+              console.warn('[Scribix] Failed to inject/show on tab change:', chrome.runtime.lastError);
             }
           });
         }
@@ -610,7 +610,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Page finished loading: re-inject and show indicators
             chrome.runtime.sendMessage({ type: 'INJECT_AND_SHOW', tabId: activeTabId }, (res) => {
               if (chrome.runtime.lastError || !res?.success) {
-                console.warn('[Content Enhancer] Failed to inject/show on tab update:', chrome.runtime.lastError);
+                 console.warn('[Scribix] Failed to inject/show on tab update:', chrome.runtime.lastError);
               }
             });
           }
@@ -869,7 +869,7 @@ Existing: "${existingValue}"`;
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`,
           'HTTP-Referer': 'https://github.com/vasubhalodiya',
-          'X-Title': 'Content Enhancer'
+          'X-Title': 'Scribix'
         },
         body: JSON.stringify({
           model: modelName,

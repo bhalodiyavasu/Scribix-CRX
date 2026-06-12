@@ -1,6 +1,6 @@
 (async () => {
   // Register message listener once
-  if (!window.contentEnhancerListenerRegistered) {
+  if (!window.scribixListenerRegistered) {
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg.type === 'PING') {
         sendResponse({ status: 'ok' });
@@ -42,7 +42,7 @@
         return true;
       }
     });
-    window.contentEnhancerListenerRegistered = true;
+    window.scribixListenerRegistered = true;
   }
 
   // Fetch tab ID from background
@@ -57,7 +57,7 @@
     });
     tabId = response?.tabId;
   } catch (err) {
-    console.error('[Content Enhancer] Error fetching tab ID:', err);
+    console.error('[Scribix] Error fetching tab ID:', err);
   }
 
   // Helpers to read/write context with tabId
@@ -169,8 +169,8 @@
 
   const handleElementFocus = async (rawEl) => {
     if (rawEl && (
-      rawEl.classList.contains('content-enhancer-circle') || 
-      (rawEl.tagName === 'IMG' && rawEl.parentElement && rawEl.parentElement.classList.contains('content-enhancer-circle'))
+      rawEl.classList.contains('scribix-circle') || 
+      (rawEl.tagName === 'IMG' && rawEl.parentElement && rawEl.parentElement.classList.contains('scribix-circle'))
     )) {
       return;
     }
@@ -422,7 +422,7 @@
       try {
         const inputRight = input.offsetLeft + input.offsetWidth;
         Array.from(parent.children).forEach(sib => {
-          if (sib === input || sib === circle || sib.classList.contains('content-enhancer-circle')) {
+          if (sib === input || sib === circle || sib.classList.contains('scribix-circle')) {
             return;
           }
 
@@ -462,10 +462,10 @@
       // Ignore mutations if they are just our own circles being added/removed/updated
       const isOnlySelfMutations = mutations.every(mutation => {
         const target = mutation.target;
-        if (target.classList && target.classList.contains('content-enhancer-circle')) return true;
+        if (target.classList && target.classList.contains('scribix-circle')) return true;
         if (mutation.addedNodes) {
           const addedArr = Array.from(mutation.addedNodes);
-          if (addedArr.length > 0 && addedArr.every(n => n.classList && n.classList.contains('content-enhancer-circle'))) return true;
+          if (addedArr.length > 0 && addedArr.every(n => n.classList && n.classList.contains('scribix-circle'))) return true;
         }
         return false;
       });
@@ -578,7 +578,7 @@
       }
 
       const circle = document.createElement('div');
-      circle.className = 'content-enhancer-circle';
+      circle.className = 'scribix-circle';
       circle.style.cssText = `
         position: absolute;
         width: 18px;
@@ -735,11 +735,11 @@
   };
 
   // ── Inject pulse animation stylesheet ─────────────────────────────────────
-  if (!document.getElementById('content-enhancer-styles')) {
+  if (!document.getElementById('scribix-styles')) {
     const style = document.createElement('style');
-    style.id = 'content-enhancer-styles';
+    style.id = 'scribix-styles';
     style.textContent = `
-      @keyframes content-enhancer-pulse {
+      @keyframes scribix-pulse {
         from { transform: scale(1); opacity: 1; }
         to { transform: scale(1.3); opacity: 0.5; }
       }
@@ -752,11 +752,11 @@
     if (!inputEl) return;
     const parent = inputEl.parentElement;
     if (!parent) return;
-    const circle = parent.querySelector('.content-enhancer-circle');
+    const circle = parent.querySelector('.scribix-circle');
     if (!circle) return;
 
     if (isLoading) {
-      circle.style.animation = 'content-enhancer-pulse 0.8s infinite alternate';
+      circle.style.animation = 'scribix-pulse 0.8s infinite alternate';
       circle.style.pointerEvents = 'none';
     } else {
       circle.style.animation = '';
@@ -886,7 +886,7 @@
       })
       .catch((err) => {
         if (!isGenerating) return; // Exit if cancelled
-        console.error('[Content Enhancer] AI error:', err);
+        console.error('[Scribix] AI error:', err);
 
         // Show error in sidepanel chat
         chrome.runtime.sendMessage({
