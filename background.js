@@ -2,64 +2,15 @@
 const GEMINI_MODELS = ['gemini-2.5-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro'];
 const OPENROUTER_MODELS = ['openrouter/free', 'google/gemini-2.5-flash:free', 'meta-llama/llama-3-8b-instruct:free'];
 
+// Keep track of the active panel tabs in-memory
+const activePanelTabs = new Set();
+
 // ── Configure Side Panel Behavior ───────────────────────────────────────────
 if (typeof chrome !== 'undefined' && chrome.sidePanel && typeof chrome.sidePanel.setPanelBehavior === 'function') {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((err) => {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch((err) => {
     console.warn('[Scribix Background] Failed to set panel behavior:', err);
   });
 }
-
-// ── Extension Action (Toolbar Button) Click Listener (Fallback) ──────────────
-chrome.action.onClicked.addListener(async (tab) => {
-  if (!tab.id) return;
-  try {
-    // Enable side panel for this tab
-    await chrome.sidePanel.setOptions({
-      tabId: tab.id,
-      path: 'sidepanel/sidepanel.html',
-      enabled: true
-    }).catch(() => {});
-
-    // Open side panel
-    if (chrome.sidePanel && typeof chrome.sidePanel.open === 'function') {
-      await chrome.sidePanel.open({ tabId: tab.id }).catch(() => {});
-    }
-
-    // Try sending show message, inject content.js if it fails
-    const injected = await ensureContentScriptInjected(tab.id);
-    if (injected) {
-      chrome.tabs.sendMessage(tab.id, { type: 'SHOW_INDICATORS' }).catch(() => {});
-    }
-  } catch (e) {
-    console.error('[Scribix Background]', e);
-  }
-});
-
-// ── Long-Lived Port Connection Listener (detects sidepanel close) ──────────────
-chrome.runtime.onConnect.addListener((port) => {
-  if (port.name === 'sidepanel') {
-    let associatedTabId = null;
-
-    port.onMessage.addListener((msg) => {
-      if (msg.type === 'INIT_PORT' && msg.tabId) {
-        associatedTabId = msg.tabId;
-      }
-    });
-
-    port.onDisconnect.addListener(() => {
-      if (associatedTabId) {
-        chrome.tabs.sendMessage(associatedTabId, { type: 'HIDE_INDICATORS' }).catch(() => {});
-      } else {
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          const tab = tabs[0];
-          if (tab?.id) {
-            chrome.tabs.sendMessage(tab.id, { type: 'HIDE_INDICATORS' }).catch(() => {});
-          }
-        });
-      }
-    });
-  }
-});
 
 // Helper to check if content script is injected, injects if not
 async function ensureContentScriptInjected(tabId) {
@@ -84,6 +35,89 @@ async function ensureContentScriptInjected(tabId) {
   }
   return false;
 }
+
+// ── Extension Action (Toolbar Button) Click Listener ───────────────────────
+chrome.action.onClicked.addListener((tab) => {
+  if (!tab.id) return;
+  try {
+    activePanelTabs.add(tab.id);
+
+    // Enable side panel specifically for this tab
+    chrome.sidePanel.setOptions({
+      tabId: tab.id,
+      path: 'sidepanel/sidepanel.html',
+      enabled: true
+    }).catch(() => {});
+
+    // Open side panel
+    if (chrome.sidePanel && typeof chrome.sidePanel.open === 'function') {
+      chrome.sidePanel.open({ tabId: tab.id }).catch(() => {});
+    }
+
+    // Try sending show message, inject content.js if it fails
+    ensureContentScriptInjected(tab.id).then((injected) => {
+      if (injected) {
+        chrome.tabs.sendMessage(tab.id, { type: 'SHOW_INDICATORS' }).catch(() => {});
+      }
+    });
+  } catch (e) {
+    console.error('[Scribix Background]', e);
+  }
+});
+
+// Handle tab activation (switching tabs) to hide/show panel and indicators smoothly
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  const tabId = activeInfo.tabId;
+  try {
+    if (!activePanelTabs.has(tabId)) {
+      // Natively disable (hides) side panel for this tab
+      chrome.sidePanel.setOptions({
+        tabId,
+        enabled: false
+      }).catch(() => {});
+      // Hide indicators on this tab
+      chrome.tabs.sendMessage(tabId, { type: 'HIDE_INDICATORS' }).catch(() => {});
+    }
+  } catch (e) {
+    console.warn('[Scribix Background] onActivated error:', e);
+  }
+});
+
+// Disable side panel for any newly created tab by default
+chrome.tabs.onCreated.addListener((tab) => {
+  if (tab.id) {
+    chrome.sidePanel.setOptions({ tabId: tab.id, enabled: false }).catch(() => {});
+  }
+});
+
+// Clean up tab state on removal
+chrome.tabs.onRemoved.addListener((tabId) => {
+  activePanelTabs.delete(tabId);
+});
+
+// ── Long-Lived Port Connection Listener (detects sidepanel close) ──────────────
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === 'sidepanel') {
+    let associatedTabId = null;
+
+    port.onMessage.addListener((msg) => {
+      if (msg.type === 'INIT_PORT' && msg.tabId) {
+        associatedTabId = msg.tabId;
+        activePanelTabs.add(associatedTabId);
+      }
+    });
+
+    port.onDisconnect.addListener(() => {
+      if (associatedTabId) {
+        // Since the side panel disconnected, it is closed.
+        // Clean up the state for this tab immediately.
+        activePanelTabs.delete(associatedTabId);
+        chrome.sidePanel.setOptions({ tabId: associatedTabId, enabled: false }).catch(() => {});
+        chrome.tabs.sendMessage(associatedTabId, { type: 'HIDE_INDICATORS' }).catch(() => {});
+      }
+    });
+  }
+});
 
 // ── Model Fetching Helpers ───────────────────────────────────────────────────
 async function fetchModelsForProvider(provider, apiKey) {
@@ -146,18 +180,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (chrome.sidePanel && typeof chrome.sidePanel.open === 'function') {
       const tabId = msg.tabId || sender?.tab?.id;
       if (tabId) {
+        activePanelTabs.add(tabId);
         chrome.sidePanel.setOptions({
           tabId: tabId,
           path: 'sidepanel/sidepanel.html',
           enabled: true
-        }).then(() => {
-          return chrome.sidePanel.open({ tabId });
-        })
-        .then(() => sendResponse({ success: true }))
-        .catch(err => {
-          console.error('[Scribix] Failed to open side panel:', err);
-          sendResponse({ success: false, error: err.message });
-        });
+        }).catch(() => {});
+
+        chrome.sidePanel.open({ tabId })
+          .then(() => sendResponse({ success: true }))
+          .catch(err => {
+            console.error('[Scribix] Failed to open side panel:', err);
+            sendResponse({ success: false, error: err.message });
+          });
         return true;
       }
     }
@@ -270,10 +305,26 @@ chrome.runtime.onInstalled.addListener(() => {
     title: "Enhance with Scribix",
     contexts: ["editable"]
   });
+
+  // Disable side panel for all existing tabs on install/update
+  chrome.tabs.query({}, (tabs) => {
+    tabs.forEach(tab => {
+      if (tab.id) {
+        chrome.sidePanel.setOptions({ tabId: tab.id, enabled: false }).catch(() => {});
+      }
+    });
+  });
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "enhance-field" && tab?.id) {
+    activePanelTabs.add(tab.id);
+    chrome.sidePanel.setOptions({
+      tabId: tab.id,
+      path: 'sidepanel/sidepanel.html',
+      enabled: true
+    }).catch(() => {});
+
     if (chrome.sidePanel && typeof chrome.sidePanel.open === 'function') {
       chrome.sidePanel.open({ tabId: tab.id }).catch(() => {});
     }

@@ -5,9 +5,10 @@ document.addEventListener('DOMContentLoaded', () => {
     port = chrome.runtime.connect({ name: 'sidepanel' });
   }
 
+
   let activeTabId = null;
 
-  // Request showing indicators on panel open & clear context
+  // Request showing indicators on panel open
   if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tab = tabs[0];
@@ -20,13 +21,11 @@ document.addEventListener('DOMContentLoaded', () => {
             windowId: tab.windowId
           });
         }
-        // Clear active input context for this tab on load so we start in a clean empty state
-        chrome.storage.local.remove(`activeInputContext_${activeTabId}`, () => {
-          chrome.runtime.sendMessage({ type: 'INJECT_AND_SHOW', tabId: activeTabId }, (res) => {
-            if (chrome.runtime.lastError || !res?.success) {
-              console.warn('[Scribix] Failed to inject/show via background:', chrome.runtime.lastError);
-            }
-          });
+        // Inject and show indicators on load without clearing the active input context
+        chrome.runtime.sendMessage({ type: 'INJECT_AND_SHOW', tabId: activeTabId }, (res) => {
+          if (chrome.runtime.lastError || !res?.success) {
+            console.warn('[Scribix] Failed to inject/show via background:', chrome.runtime.lastError);
+          }
         });
       }
     });
@@ -447,6 +446,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
+  const loadChatHistory = () => {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local && activeTabId) {
+      chrome.storage.local.get([`chatHistory_${activeTabId}`], (res) => {
+        const history = res[`chatHistory_${activeTabId}`] || [];
+        // Clear existing messages first to avoid duplicates
+        chatMessages.innerHTML = '';
+        history.forEach(msg => {
+          appendMessage(msg.role, msg.text, false, false);
+        });
+        updateEmptyState();
+      });
+    }
+  };
+
   const formatIdentifier = (str) => {
     if (!str) return '';
     str = str.trim().replace(/^_+|_+$/g, '');
@@ -521,6 +534,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Listen for chat entries and generating state from content script
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      // Ignore messages that do not come from this side panel's associated tab
+      if (sender?.tab && sender.tab.id !== activeTabId) {
+        return;
+      }
+
       if (msg.type === 'SHOW_CHAT_ENTRY') {
         appendMessage('user', msg.prompt);
         if (msg.error) {
@@ -566,35 +584,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   loadActiveContext();
+  loadChatHistory();
 
-  // Listen to tab switches (activation)
-  if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onActivated) {
-    chrome.tabs.onActivated.addListener((activeInfo) => {
-      chrome.windows.getCurrent((currentWindow) => {
-        if (activeInfo.windowId === currentWindow.id) {
-          const oldTabId = activeTabId;
-          activeTabId = activeInfo.tabId;
-
-          // Hide indicators on the old tab
-          if (oldTabId) {
-            chrome.tabs.sendMessage(oldTabId, { type: 'HIDE_INDICATORS' }).catch(() => { });
-          }
-
-          // Load context for the new active tab
-          chrome.storage.local.get([`activeInputContext_${activeTabId}`], (res) => {
-            updateTargetContext(res[`activeInputContext_${activeTabId}`] || null);
-          });
-
-          // Show indicators on the new active tab
-          chrome.runtime.sendMessage({ type: 'INJECT_AND_SHOW', tabId: activeTabId }, (res) => {
-            if (chrome.runtime.lastError || !res?.success) {
-              console.warn('[Scribix] Failed to inject/show on tab change:', chrome.runtime.lastError);
-            }
-          });
-        }
-      });
-    });
-  }
 
   // Listen to tab updates (loading/complete navigation)
   if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onUpdated) {
@@ -712,7 +703,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Render a standard text message bubble or shimmer loader
-  function appendMessage(role, text, isLoading = false) {
+  function appendMessage(role, text, isLoading = false, save = true) {
     const msgDiv = document.createElement('div');
     msgDiv.className = `message ${role}`;
 
@@ -763,6 +754,15 @@ document.addEventListener('DOMContentLoaded', () => {
     chatMessages.appendChild(msgDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
+    // Save to storage
+    if (save && !isLoading && activeTabId) {
+      chrome.storage.local.get([`chatHistory_${activeTabId}`], (res) => {
+        const history = res[`chatHistory_${activeTabId}`] || [];
+        history.push({ role, text });
+        chrome.storage.local.set({ [`chatHistory_${activeTabId}`]: history });
+      });
+    }
+
     return msgDiv;
   }
 
@@ -799,6 +799,12 @@ document.addEventListener('DOMContentLoaded', () => {
     userPromptInput.value = '';
     userPromptInput.style.height = 'auto';
     sendPromptBtn.disabled = true;
+
+    // Clear saved history
+    if (activeTabId) {
+      chrome.storage.local.remove(`chatHistory_${activeTabId}`);
+    }
+
     showToast('Chat cleared');
   });
 
