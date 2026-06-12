@@ -5,17 +5,24 @@ document.addEventListener('DOMContentLoaded', () => {
     port = chrome.runtime.connect({ name: 'sidepanel' });
   }
 
+  let activeTabId = null;
+
   // Request showing indicators on panel open & clear context
   if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tab = tabs[0];
       if (tab?.id) {
+        activeTabId = tab.id;
         if (port) {
-          port.postMessage({ type: 'INIT_PORT', tabId: tab.id });
+          port.postMessage({
+            type: 'INIT_PORT',
+            tabId: tab.id,
+            windowId: tab.windowId
+          });
         }
-        // Clear active input context on load so we start in a clean empty state
-        chrome.storage.local.remove('activeInputContext', () => {
-          chrome.runtime.sendMessage({ type: 'INJECT_AND_SHOW', tabId: tab.id }, (res) => {
+        // Clear active input context for this tab on load so we start in a clean empty state
+        chrome.storage.local.remove(`activeInputContext_${activeTabId}`, () => {
+          chrome.runtime.sendMessage({ type: 'INJECT_AND_SHOW', tabId: activeTabId }, (res) => {
             if (chrome.runtime.lastError || !res?.success) {
               console.warn('[Content Enhancer] Failed to inject/show via background:', chrome.runtime.lastError);
             }
@@ -30,7 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingsPanel = document.getElementById('settings-panel');
   const goToSettingsBtn = document.getElementById('go-to-settings');
   const backToChatBtn = document.getElementById('back-to-chat');
-  
+
   // Chat Elements
   const targetFieldName = document.getElementById('target-field-name');
   const chatMessages = document.getElementById('chat-messages');
@@ -62,6 +69,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentSettings = {};
   let lastSavedKey = '';
   let showApiKey = false;
+  let isInputGenerating = false;
+  let generatingPrompt = '';
 
   // ── Navigation ─────────────────────────────────────────────────────────────
   goToSettingsBtn.addEventListener('click', () => {
@@ -92,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
       'openrouterSelectedModel'
     ], (res) => {
       currentSettings = res;
-      
+
       // Set initial provider
       const provider = res.aiProvider || 'GEMINI';
       updateProviderUI(provider);
@@ -114,7 +123,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateProviderUI(provider) {
     const label = provider === 'GEMINI' ? 'Google Gemini' : 'OpenRouter';
     providerSelectedLabel.textContent = label;
-    
+
     // Update active class & check marks in provider dropdown menu
     const items = providerMenu.querySelectorAll('.ai-dropdown-item');
     items.forEach(item => {
@@ -141,10 +150,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function loadKeysAndFetchModels(provider) {
-    const defaultKey = provider === 'GEMINI' 
-      ? (currentSettings.geminiDefaultKey || '') 
+    const defaultKey = provider === 'GEMINI'
+      ? (currentSettings.geminiDefaultKey || '')
       : (currentSettings.openrouterDefaultKey || '');
-    
+
     defaultKeyInput.value = defaultKey;
     lastSavedKey = defaultKey;
 
@@ -153,7 +162,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function fetchModels(provider, defaultKey) {
     modelSelectedLabel.innerHTML = `<span class="loading-text"><span class="icon-mask icon-spinner icon-size-xs spin" style="margin-right: 4px;"></span>Loading...</span>`;
-    
+
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
       chrome.runtime.sendMessage({
         type: 'FETCH_MODELS',
@@ -161,9 +170,9 @@ document.addEventListener('DOMContentLoaded', () => {
         defaultKey
       }, (res) => {
         const modelsList = res?.models || [];
-        
-        const savedModel = provider === 'GEMINI' 
-          ? currentSettings.geminiSelectedModel 
+
+        const savedModel = provider === 'GEMINI'
+          ? currentSettings.geminiSelectedModel
           : currentSettings.openrouterSelectedModel;
 
         let activeModel = '';
@@ -185,7 +194,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const fakeModels = provider === 'GEMINI'
           ? ['gemini-2.5-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro']
           : ['openrouter/free', 'google/gemini-2.5-flash:free', 'meta-llama/llama-3-8b-instruct:free'];
-        
+
         const activeModel = fakeModels[0];
         modelSelectedLabel.textContent = activeModel;
         composerActiveModel.textContent = activeModel;
@@ -196,7 +205,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderModelList(modelsList, selectedModel) {
     modelListContainer.innerHTML = '';
-    
+
     if (modelsList.length === 0) {
       modelListContainer.innerHTML = '<div class="model-empty">No models available</div>';
       return;
@@ -235,10 +244,10 @@ document.addEventListener('DOMContentLoaded', () => {
   function selectModel(modelName) {
     const provider = currentSettings.aiProvider || 'GEMINI';
     saveSelectedModel(provider, modelName);
-    
+
     modelSelectedLabel.textContent = modelName;
     composerActiveModel.textContent = modelName;
-    
+
     // Update selected class in DOM
     const items = modelListContainer.querySelectorAll('.ai-dropdown-item');
     items.forEach(item => {
@@ -309,7 +318,7 @@ document.addEventListener('DOMContentLoaded', () => {
     modelMenu.classList.toggle('visible');
     const modelChevron = modelTrigger.querySelector('.chevron-icon');
     if (modelChevron) modelChevron.classList.toggle('rotated');
-    
+
     if (modelMenu.classList.contains('visible')) {
       modelSearchInput.value = '';
       modelSearchInput.focus();
@@ -325,7 +334,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const query = modelSearchInput.value.trim().toLowerCase();
     const items = modelListContainer.querySelectorAll('.ai-dropdown-item');
     let visibleCount = 0;
-    
+
     items.forEach(item => {
       const val = item.getAttribute('data-value');
       if (!val) return;
@@ -371,7 +380,7 @@ document.addEventListener('DOMContentLoaded', () => {
   btnToggleDefaultKey.addEventListener('click', () => {
     showApiKey = !showApiKey;
     defaultKeyInput.type = showApiKey ? 'text' : 'password';
-    
+
     // Toggle Eye/EyeOff SVGs
     if (showApiKey) {
       btnToggleDefaultKey.innerHTML = `<span class="icon-mask icon-eye-off icon-size-sm"></span>`;
@@ -393,7 +402,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (val === lastSavedKey) return;
 
     const provider = currentSettings.aiProvider || 'GEMINI';
-    
+
     if (provider === 'GEMINI') {
       currentSettings.geminiDefaultKey = val;
       chrome.storage.local.set({ geminiDefaultKey: val }, () => {
@@ -413,21 +422,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function showToast(message, isSuccess = true) {
     toastText.textContent = message;
-    
+
     toast.style.borderColor = isSuccess ? '#4174DA' : '#f48771';
     toast.style.backgroundColor = '#252526';
     toast.style.color = isSuccess ? '#ffffff' : '#f48771';
-    
+
     toast.classList.add('visible');
     setTimeout(() => toast.classList.remove('visible'), 2000);
   }
 
   // ── Context Management ──────────────────────────────────────────────────────
   const loadActiveContext = () => {
-    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-      chrome.storage.local.get(['activeInputContext'], (res) => {
-        if (res.activeInputContext) {
-          updateTargetContext(res.activeInputContext);
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local && activeTabId) {
+      chrome.storage.local.get([`activeInputContext_${activeTabId}`], (res) => {
+        const context = res[`activeInputContext_${activeTabId}`];
+        if (context) {
+          updateTargetContext(context);
         } else {
           updateTargetContext(null);
         }
@@ -442,7 +452,7 @@ document.addEventListener('DOMContentLoaded', () => {
     str = str.trim().replace(/^_+|_+$/g, '');
     let parts = str.split(/(?=[A-Z])|[_-\s]+/);
     parts = parts.filter(p => p.trim().length > 0)
-                 .map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase());
+      .map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase());
     return parts.join(' ');
   };
 
@@ -458,9 +468,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     activeContext = context;
-    userPromptInput.disabled = false;
-    userPromptInput.placeholder = 'Ask anything...';
-    
+
+    // Don't re-enable inputs if currently generating
+    if (!isInputGenerating) {
+      userPromptInput.disabled = false;
+      userPromptInput.placeholder = 'Ask anything...';
+    }
+
     // Priority: Label -> Placeholder -> Formatted Name/ID
     let title = context.label;
     if (!title || !title.trim()) {
@@ -472,14 +486,14 @@ document.addEventListener('DOMContentLoaded', () => {
         title = formatIdentifier(raw);
       }
     }
-    
+
     if (title && title.trim()) {
       targetFieldName.textContent = title.trim();
       document.getElementById('target-context-bar').style.display = 'flex';
     } else {
       document.getElementById('target-context-bar').style.display = 'none';
     }
-    
+
     if (context.currentValue) {
       originalTextContent.textContent = context.currentValue;
       originalTextPreview.classList.remove('hidden');
@@ -487,15 +501,56 @@ document.addEventListener('DOMContentLoaded', () => {
       originalTextPreview.classList.add('hidden');
     }
 
-    // Focus prompt input when context becomes active
-    userPromptInput.focus();
+    // Focus prompt input when context becomes active (not during generation)
+    if (!isInputGenerating) {
+      setTimeout(() => {
+        userPromptInput.focus();
+      }, 150);
+    }
   };
 
   // Listen for context updates from content script click
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === 'local' && changes.activeInputContext) {
-        updateTargetContext(changes.activeInputContext.newValue);
+      if (area === 'local' && activeTabId && changes[`activeInputContext_${activeTabId}`]) {
+        updateTargetContext(changes[`activeInputContext_${activeTabId}`].newValue);
+      }
+    });
+  }
+
+  // Listen for chat entries and generating state from content script
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      if (msg.type === 'SHOW_CHAT_ENTRY') {
+        appendMessage('user', msg.prompt);
+        if (msg.error) {
+          appendMessage('assistant', `Error: ${msg.error}`);
+        } else {
+          appendMessage('assistant', msg.response);
+        }
+        updateEmptyState();
+        sendResponse({ success: true });
+      }
+
+      if (msg.type === 'INPUT_GENERATING_START') {
+        isInputGenerating = true;
+        generatingPrompt = msg.prompt || '';
+        // Disable chat input and show stop icon (stop button stays ENABLED for cancel)
+        userPromptInput.disabled = true;
+        userPromptInput.placeholder = 'Generating...';
+        sendPromptBtn.disabled = false;
+        sendPromptBtn.innerHTML = `<span class="icon-mask icon-stop icon-size-md"></span>`;
+        sendResponse({ success: true });
+      }
+
+      if (msg.type === 'INPUT_GENERATING_STOP') {
+        isInputGenerating = false;
+        // Re-enable chat input and show send icon
+        userPromptInput.disabled = false;
+        userPromptInput.placeholder = 'Ask anything...';
+        sendPromptBtn.disabled = !userPromptInput.value.trim() || !activeContext;
+        sendPromptBtn.innerHTML = `<span class="icon-mask icon-send icon-size-md"></span>`;
+        sendResponse({ success: true });
       }
     });
   }
@@ -504,13 +559,65 @@ document.addEventListener('DOMContentLoaded', () => {
     originalTextPreview.classList.add('hidden');
     if (activeContext) {
       activeContext.currentValue = '';
-      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.set({ activeInputContext: activeContext });
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local && activeTabId) {
+        chrome.storage.local.set({ [`activeInputContext_${activeTabId}`]: activeContext });
       }
     }
   });
 
   loadActiveContext();
+
+  // Listen to tab switches (activation)
+  if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onActivated) {
+    chrome.tabs.onActivated.addListener((activeInfo) => {
+      chrome.windows.getCurrent((currentWindow) => {
+        if (activeInfo.windowId === currentWindow.id) {
+          const oldTabId = activeTabId;
+          activeTabId = activeInfo.tabId;
+
+          // Hide indicators on the old tab
+          if (oldTabId) {
+            chrome.tabs.sendMessage(oldTabId, { type: 'HIDE_INDICATORS' }).catch(() => { });
+          }
+
+          // Load context for the new active tab
+          chrome.storage.local.get([`activeInputContext_${activeTabId}`], (res) => {
+            updateTargetContext(res[`activeInputContext_${activeTabId}`] || null);
+          });
+
+          // Show indicators on the new active tab
+          chrome.runtime.sendMessage({ type: 'INJECT_AND_SHOW', tabId: activeTabId }, (res) => {
+            if (chrome.runtime.lastError || !res?.success) {
+              console.warn('[Content Enhancer] Failed to inject/show on tab change:', chrome.runtime.lastError);
+            }
+          });
+        }
+      });
+    });
+  }
+
+  // Listen to tab updates (loading/complete navigation)
+  if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.onUpdated) {
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+      chrome.windows.getCurrent((currentWindow) => {
+        if (tab.windowId === currentWindow.id && tabId === activeTabId) {
+          if (changeInfo.status === 'loading') {
+            // Page is starting to load/navigate: clear the context for this tab
+            chrome.storage.local.remove(`activeInputContext_${activeTabId}`, () => {
+              updateTargetContext(null);
+            });
+          } else if (changeInfo.status === 'complete') {
+            // Page finished loading: re-inject and show indicators
+            chrome.runtime.sendMessage({ type: 'INJECT_AND_SHOW', tabId: activeTabId }, (res) => {
+              if (chrome.runtime.lastError || !res?.success) {
+                console.warn('[Content Enhancer] Failed to inject/show on tab update:', chrome.runtime.lastError);
+              }
+            });
+          }
+        }
+      });
+    });
+  }
 
   // ── Textarea Auto-Resize ───────────────────────────────────────────────────
   userPromptInput.addEventListener('input', () => {
@@ -528,6 +635,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ── Prompt Submission & AI Query ───────────────────────────────────────────
   sendPromptBtn.addEventListener('click', async () => {
+    // If currently generating from input, clicking stop cancels it
+    if (isInputGenerating) {
+      isInputGenerating = false;
+      userPromptInput.disabled = false;
+      userPromptInput.placeholder = 'Ask anything...';
+      sendPromptBtn.disabled = !userPromptInput.value.trim() || !activeContext;
+      sendPromptBtn.innerHTML = `<span class="icon-mask icon-send icon-size-md"></span>`;
+
+      // Immediately append user prompt and termination message in chat
+      if (generatingPrompt) {
+        appendMessage('user', generatingPrompt);
+        appendMessage('assistant', 'Generation terminated.');
+        updateEmptyState();
+      }
+
+      // Tell content script to cancel generation
+      if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.id) {
+          chrome.tabs.sendMessage(tab.id, { type: 'CANCEL_GENERATION' }).catch(() => { });
+        }
+      }
+      return;
+    }
+
     const prompt = userPromptInput.value.trim();
     if (!prompt) return;
 
@@ -545,13 +677,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       const result = await fetchAIResponse(prompt);
-      
+
       // Remove loading indicator
       loadingBubble.remove();
 
       // Render assistant bubble with clean text
       appendMessage('assistant', result);
-      
+
       // Auto-fill into active input field
       if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -568,8 +700,8 @@ document.addEventListener('DOMContentLoaded', () => {
       originalTextPreview.classList.add('hidden');
       if (activeContext) {
         activeContext.currentValue = '';
-        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-          chrome.storage.local.set({ activeInputContext: activeContext });
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local && activeTabId) {
+          chrome.storage.local.set({ [`activeInputContext_${activeTabId}`]: activeContext });
         }
       }
     } catch (err) {
@@ -595,8 +727,12 @@ document.addEventListener('DOMContentLoaded', () => {
       bubble.className = 'bubble';
       bubble.style.whiteSpace = 'pre-wrap';
       bubble.textContent = text;
+      if (text === 'Generation terminated.') {
+        bubble.style.fontStyle = 'italic';
+        bubble.style.color = 'var(--ax-fg-secondary)';
+      }
     }
-    
+
     rowDiv.appendChild(bubble);
     msgDiv.appendChild(rowDiv);
 

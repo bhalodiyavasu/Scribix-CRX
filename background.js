@@ -179,6 +179,87 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ success: false, error: err.message });
     });
     return true; // Keep channel open for async response
+  } else if (msg.type === 'GET_TAB_ID') {
+    sendResponse({ tabId: sender?.tab?.id });
+    return false;
+  } else if (msg.type === 'GENERATE_AI') {
+    // Direct AI generation request from content script (Enter key in input)
+    (async () => {
+      try {
+        const settings = await chrome.storage.local.get([
+          'aiProvider', 'geminiDefaultKey', 'geminiSelectedModel',
+          'openrouterDefaultKey', 'openrouterSelectedModel'
+        ]);
+
+        const provider = settings.aiProvider || 'GEMINI';
+        const apiKey = provider === 'GEMINI' ? settings.geminiDefaultKey : settings.openrouterDefaultKey;
+        const modelName = provider === 'GEMINI'
+          ? (settings.geminiSelectedModel || 'gemini-1.5-flash')
+          : (settings.openrouterSelectedModel || 'openrouter/free');
+
+        if (!apiKey) {
+          sendResponse({ success: false, error: 'No API key configured' });
+          return;
+        }
+
+        const systemPrompt = `You are an input field filler. Return ONLY the final raw text to fill the field.
+Strict rules:
+1. No chat, preamble, notes, explanations, markdown formatting, or quotes.
+2. Interpret the user's core intent even if the input is short, fragmented, or has informal/reversed word order.
+3. If the intent is to generate mock/random/placeholder data (e.g. email, phone, name, address, number, specific domain mail), generate a highly realistic, professional, and format/country-appropriate random value. Do NOT output generic dummy placeholders unless specifically requested.
+4. If the intent is to process, translate, rewrite, or enhance existing text, execute that specific operation directly in a highly polished, professional, and natural manner.
+
+Context:
+Label: "${msg.fieldLabel || 'Text input'}"
+Placeholder: "${msg.fieldPlaceholder || ''}"
+Existing: "${msg.existingValue || ''}"`;
+
+        const randomSeed = Math.random().toString(36).substring(7);
+        let responseText = '';
+
+        if (provider === 'GEMINI') {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              systemInstruction: { parts: [{ text: systemPrompt }] },
+              contents: [{ role: 'user', parts: [{ text: `${msg.prompt}\n\n[Seed: ${randomSeed}]` }] }],
+              generationConfig: { temperature: 1.0 }
+            })
+          });
+          if (!res.ok) throw new Error(`API error: ${res.status}`);
+          const data = await res.json();
+          responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        } else {
+          const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey}`,
+              'HTTP-Referer': 'https://github.com/vasubhalodiya',
+              'X-Title': 'Content Enhancer'
+            },
+            body: JSON.stringify({
+              model: modelName,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: `${msg.prompt}\n\n[Seed: ${randomSeed}]` }
+              ],
+              temperature: 1.0
+            })
+          });
+          if (!res.ok) throw new Error(`API error: ${res.status}`);
+          const data = await res.json();
+          responseText = data.choices?.[0]?.message?.content || '';
+        }
+
+        sendResponse({ success: true, text: responseText });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true; // Keep channel open for async
   }
 });
 

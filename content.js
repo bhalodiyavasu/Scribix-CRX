@@ -30,20 +30,97 @@
         triggerContextMenuSelect().then(sendResponse);
         return true;
       }
+      if (msg.type === 'CANCEL_GENERATION') {
+        isGenerating = false;
+        if (activeElement) {
+          setIndicatorLoading(activeElement, false);
+          activeElement.readOnly = false;
+          activeElement.style.opacity = '';
+          activeElement.focus();
+        }
+        sendResponse({ status: 'cancelled' });
+        return true;
+      }
     });
     window.contentEnhancerListenerRegistered = true;
   }
+
+  // Fetch tab ID from background
+  let tabId = null;
+  try {
+    const response = await new Promise((resolve) => {
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({ type: 'GET_TAB_ID' }, resolve);
+      } else {
+        resolve(null);
+      }
+    });
+    tabId = response?.tabId;
+  } catch (err) {
+    console.error('[Content Enhancer] Error fetching tab ID:', err);
+  }
+
+  // Helpers to read/write context with tabId
+  const saveContext = async (context) => {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      const key = tabId ? `activeInputContext_${tabId}` : 'activeInputContext';
+      await chrome.storage.local.set({ [key]: context });
+    }
+  };
+
+  const getContext = (callback) => {
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      const key = tabId ? `activeInputContext_${tabId}` : 'activeInputContext';
+      chrome.storage.local.get([key], (res) => {
+        callback(res[key] || null);
+      });
+    } else {
+      callback(null);
+    }
+  };
+
+  // ── Helper Utilities for Rich Text / Custom Editors ────────────────────────
+  const getEditableElement = (el) => {
+    if (!el) return null;
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') return el;
+    if (el.getAttribute('contenteditable') === 'true' || el.isContentEditable) return el;
+    if (el.getAttribute('role') === 'textbox') return el;
+
+    // Check if it's or is inside editor-critique-card
+    const critiqueCard = el.closest('editor-critique-card') || (el.tagName === 'EDITOR-CRITIQUE-CARD' ? el : null);
+    if (critiqueCard) {
+      const editable = critiqueCard.querySelector('[contenteditable="true"], [role="textbox"], textarea, input');
+      if (editable) return editable;
+      return critiqueCard;
+    }
+
+    return null;
+  };
+
+  const isSupportedInputField = (el) => {
+    return getEditableElement(el) !== null;
+  };
+
+  const setElementReadOnly = (el, readonly) => {
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+      el.readOnly = readonly;
+    } else {
+      el.contentEditable = readonly ? 'false' : 'true';
+    }
+    el.style.opacity = readonly ? '0.7' : '';
+  };
 
   // ── Global State ───────────────────────────────────────────────────────────
   let indicatorsVisible = false;
   let activeElement = null;
   let indicatorElements = [];
   let lastRightClickedElement = null;
+  let isGenerating = false;
 
   // Track last right clicked element globally
   document.addEventListener('contextmenu', (e) => {
-    const el = e.target;
-    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+    const el = getEditableElement(e.target);
+    if (el) {
       lastRightClickedElement = el;
     } else {
       lastRightClickedElement = null;
@@ -51,9 +128,10 @@
   });
 
   const triggerContextMenuSelect = async () => {
-    const el = lastRightClickedElement || document.activeElement;
-    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
-      if (el.disabled || el.readOnly) return { status: 'ignored' };
+    const rawEl = lastRightClickedElement || document.activeElement;
+    const el = getEditableElement(rawEl);
+    if (el) {
+      if (el.disabled || el.readOnly || el.getAttribute('contenteditable') === 'false') return { status: 'ignored' };
       if (el.tagName === 'INPUT') {
         const type = (el.getAttribute('type') || '').toLowerCase().trim();
         const allowedTypes = ['text', 'email', 'url', 'search', 'tel', ''];
@@ -70,15 +148,15 @@
       const context = {
         elementId: id,
         label: getLabel(el),
-        placeholder: el.placeholder || '',
+        placeholder: el.placeholder || el.getAttribute('placeholder') || '',
         name: el.getAttribute('name') || '',
         idAttr: el.id || '',
-        currentValue: el.value || '',
+        currentValue: (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? (el.value || '') : (el.innerText || el.textContent || ''),
         timestamp: Date.now()
       };
 
-      await chrome.storage.local.set({ activeInputContext: context });
-      
+      await saveContext(context);
+
       // Auto show indicators if not already visible
       if (!indicatorsVisible) {
         createIndicators();
@@ -89,10 +167,10 @@
     return { status: 'no_target' };
   };
 
-  // Capture context on focus or click automatically
-  const handleElementFocus = async (el) => {
-    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return;
-    if (el.disabled || el.readOnly) return;
+  const handleElementFocus = async (rawEl) => {
+    const el = getEditableElement(rawEl);
+    if (!el) return;
+    if (el.disabled || el.readOnly || el.getAttribute('contenteditable') === 'false') return;
     if (el.tagName === 'INPUT') {
       const type = (el.getAttribute('type') || '').toLowerCase().trim();
       const allowedTypes = ['text', 'email', 'url', 'search', 'tel', ''];
@@ -109,68 +187,89 @@
     const context = {
       elementId: id,
       label: getLabel(el),
-      placeholder: el.placeholder || '',
+      placeholder: el.placeholder || el.getAttribute('placeholder') || '',
       name: el.getAttribute('name') || '',
       idAttr: el.id || '',
-      currentValue: el.value || '',
+      currentValue: (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? (el.value || '') : (el.innerText || el.textContent || ''),
       timestamp: Date.now()
     };
 
-    await chrome.storage.local.set({ activeInputContext: context });
+    await saveContext(context);
   };
 
   document.addEventListener('focusin', (e) => handleElementFocus(e.target));
   document.addEventListener('click', (e) => handleElementFocus(e.target));
 
-  // ── Framework-Resilient Value Setter ───────────────────────────────────────
   const setVal = (el, val) => {
-    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-    const nativeSet = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-    try {
-      if (nativeSet) nativeSet.call(el, val); else el.value = val;
-    } catch (_) { return; }
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+      const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const nativeSet = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      try {
+        if (nativeSet) nativeSet.call(el, val); else el.value = val;
+      } catch (_) { return; }
 
-    // Dispatch input and change events
-    ['input', 'change', 'blur'].forEach(type =>
-      el.dispatchEvent(new Event(type, { bubbles: true }))
-    );
-
-    // React Fiber framework fallback
-    try {
-      const fk = Object.keys(el).find(k =>
-        k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance')
+      // Dispatch input and change events
+      ['input', 'change', 'blur'].forEach(type =>
+        el.dispatchEvent(new Event(type, { bubbles: true }))
       );
-      if (!fk) return;
-      let fiber = el[fk];
-      while (fiber) {
-        const mp = fiber.memoizedProps;
-        if (mp && !mp.options) {
-          if (typeof mp.onChange === 'function') {
-            mp.onChange({ target: el, currentTarget: el, type: 'change', nativeEvent: new Event('change') });
-            break;
+
+      // React Fiber framework fallback
+      try {
+        const fk = Object.keys(el).find(k =>
+          k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance')
+        );
+        if (!fk) return;
+        let fiber = el[fk];
+        while (fiber) {
+          const mp = fiber.memoizedProps;
+          if (mp && !mp.options) {
+            if (typeof mp.onChange === 'function') {
+              mp.onChange({ target: el, currentTarget: el, type: 'change', nativeEvent: new Event('change') });
+              break;
+            }
+            if (mp?.control && typeof mp.name === 'string') {
+              try {
+                if (typeof mp.control._setFieldValue === 'function') {
+                  mp.control._setFieldValue(mp.name, val);
+                  mp.control._subjects?.values?.next?.({
+                    name: mp.name,
+                    values: { ...mp.control._formValues, [mp.name]: val },
+                  });
+                  break;
+                }
+              } catch (_) { }
+            }
           }
-          if (mp?.control && typeof mp.name === 'string') {
-            try {
-              if (typeof mp.control._setFieldValue === 'function') {
-                mp.control._setFieldValue(mp.name, val);
-                mp.control._subjects?.values?.next?.({
-                  name: mp.name,
-                  values: { ...mp.control._formValues, [mp.name]: val },
-                });
-                break;
-              }
-            } catch (_) {}
-          }
+          fiber = fiber.return;
         }
-        fiber = fiber.return;
+      } catch (_) { }
+    } else {
+      // Contenteditable or custom element (e.g. Teams, Notion, Slate, etc.)
+      el.focus();
+      try {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+
+        if (!document.execCommand('insertText', false, val)) {
+          el.innerText = val;
+        }
+      } catch (_) {
+        el.innerText = val;
       }
-    } catch (_) {}
+
+      ['input', 'change', 'blur'].forEach(type =>
+        el.dispatchEvent(new Event(type, { bubbles: true }))
+      );
+    }
   };
 
   // ── Label Resolution Utility ──────────────────────────────────────────────
   const getLabel = el => {
     if (!el) return '';
-    
+
     // 1. Aria label attributes
     const aria = el.getAttribute('aria-label');
     if (aria) return aria.trim();
@@ -223,13 +322,13 @@
     let curr = el.parentElement;
     for (let i = 0; i < 5; i++) {
       if (!curr || curr === document.body) break;
-      
+
       const lbl = curr.querySelector('label');
       if (lbl && lbl !== el) {
         const text = lbl.textContent.trim().replace(/[:：\s]+$/, '');
         if (text && text.length < 50) return text;
       }
-      
+
       const titleAttr = curr.getAttribute('title');
       if (titleAttr && titleAttr.trim()) return titleAttr.trim();
 
@@ -238,7 +337,7 @@
         const headingText = heading.textContent.trim().replace(/[:：\s]+$/, '');
         if (headingText && headingText.length < 50) return headingText;
       }
-      
+
       curr = curr.parentElement;
     }
 
@@ -248,7 +347,7 @@
   // Check if element is visible
   const isVisible = el => {
     if (!document.contains(el)) return false;
-    
+
     try {
       const style = getComputedStyle(el);
       if (el.offsetParent === null && style.position !== 'fixed') {
@@ -266,7 +365,7 @@
       n = n.parentElement;
     }
     const r = el.getBoundingClientRect();
-    
+
     // Normal text input/textarea is at least 20px wide and 10px high. Helper/hidden inputs are smaller.
     if (r.width < 20 || r.height < 10) return false;
 
@@ -281,7 +380,7 @@
   const getOffsetRight = (input, circle = null) => {
     const style = getComputedStyle(input);
     const pr = parseFloat(style.paddingRight || '0');
-    let offsetRight = pr > 24 ? pr + 4 : 8;
+    let offsetRight = pr > 28 ? pr + 4 : 12;
 
     const parent = input.parentElement;
     if (parent) {
@@ -291,11 +390,11 @@
           if (sib === input || sib === circle || sib.classList.contains('content-enhancer-circle')) {
             return;
           }
-          
+
           const sibLeft = sib.offsetLeft;
           const sibWidth = sib.offsetWidth;
           const sibRight = sibLeft + sibWidth;
-          
+
           // If sibling right edge is inside input (within the right 45px of input)
           if (sibRight > inputRight - 45 && sibLeft < inputRight && sibWidth > 0 && sib.offsetHeight > 0) {
             // Check vertical overlap
@@ -303,7 +402,7 @@
             const sibHeight = sib.offsetHeight;
             const sibBottom = sibTop + sibHeight;
             const inputBottom = input.offsetTop + input.offsetHeight;
-            
+
             if (sibBottom > input.offsetTop && sibTop < inputBottom) {
               const requiredOffset = inputRight - sibLeft + 4;
               if (requiredOffset > offsetRight) {
@@ -312,9 +411,58 @@
             }
           }
         });
-      } catch (_) {}
+      } catch (_) { }
     }
     return offsetRight;
+  };
+
+  // ── DOM Mutation Observer ──────────────────────────────────────────────────
+  let domObserver = null;
+  let domObserverTimeout = null;
+
+  const startDOMObserver = () => {
+    if (domObserver) return;
+
+    domObserver = new MutationObserver((mutations) => {
+      // Ignore mutations if they are just our own circles being added/removed/updated
+      const isOnlySelfMutations = mutations.every(mutation => {
+        const target = mutation.target;
+        if (target.classList && target.classList.contains('content-enhancer-circle')) return true;
+        if (mutation.addedNodes) {
+          const addedArr = Array.from(mutation.addedNodes);
+          if (addedArr.length > 0 && addedArr.every(n => n.classList && n.classList.contains('content-enhancer-circle'))) return true;
+        }
+        return false;
+      });
+
+      if (isOnlySelfMutations) return;
+
+      // Debounce call to createIndicators
+      if (domObserverTimeout) clearTimeout(domObserverTimeout);
+      domObserverTimeout = setTimeout(() => {
+        if (indicatorsVisible) {
+          createIndicators();
+        }
+      }, 300);
+    });
+
+    domObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style', 'class', 'disabled', 'readonly']
+    });
+  };
+
+  const stopDOMObserver = () => {
+    if (domObserver) {
+      domObserver.disconnect();
+      domObserver = null;
+    }
+    if (domObserverTimeout) {
+      clearTimeout(domObserverTimeout);
+      domObserverTimeout = null;
+    }
   };
 
   // ── Toggle Indicators ──────────────────────────────────────────────────────
@@ -328,8 +476,9 @@
 
   // ── Remove Indicators ──────────────────────────────────────────────────────
   const removeIndicators = () => {
+    stopDOMObserver();
     indicatorElements.forEach(ind => {
-      try { ind.element.remove(); } catch (_) {}
+      try { ind.element.remove(); } catch (_) { }
     });
     indicatorElements = [];
     indicatorsVisible = false;
@@ -337,51 +486,47 @@
 
   // ── Create Indicators ──────────────────────────────────────────────────────
   const createIndicators = () => {
-    removeIndicators();
+    if (!indicatorsVisible) {
+      indicatorsVisible = true;
+    }
+    startDOMObserver();
 
-    // Query text inputs and textareas
+    // Query text inputs, textareas, contenteditable, role="textbox", and editor-critique-card
     const allowedTypes = ['text', 'email', 'url', 'search', 'tel', ''];
     const inputs = Array.from(document.querySelectorAll(
-      'input, textarea'
-    )).filter(el => {
-      if (el.disabled || el.readOnly) return false;
-      if (el.tagName === 'INPUT') {
-        const type = (el.getAttribute('type') || '').toLowerCase().trim();
-        if (!allowedTypes.includes(type)) return false;
-      }
-      return isVisible(el);
-    });
+      'input, textarea, [contenteditable="true"], [role="textbox"], editor-critique-card'
+    )).map(el => getEditableElement(el))
+      .filter((el, idx, self) => {
+        if (!el) return false;
+        if (self.indexOf(el) !== idx) return false; // Deduplicate
 
-    let idCounter = 1;
-    const placedPositions = [];
-
-    inputs.forEach(input => {
-      const parent = input.parentElement;
-      if (!parent) return;
-
-      const rect = input.getBoundingClientRect();
-      const size = 18;
-      const offsetRight = getOffsetRight(input);
-
-      // Use absolute viewport coordinates for overlap detection during creation
-      const topViewport = rect.top + window.scrollY + (input.tagName === 'TEXTAREA' ? 8 : (rect.height - size) / 2);
-      const leftViewport = rect.left + window.scrollX + rect.width - size - offsetRight;
-
-      // Check if we already have a dot within 15px of this position
-      const isOverlap = placedPositions.some(pos => {
-        const dx = pos.left - leftViewport;
-        const dy = pos.top - topViewport;
-        return Math.sqrt(dx * dx + dy * dy) < 15;
+        if (el.disabled || el.readOnly || el.getAttribute('contenteditable') === 'false') return false;
+        if (el.tagName === 'INPUT') {
+          const type = (el.getAttribute('type') || '').toLowerCase().trim();
+          if (!allowedTypes.includes(type)) return false;
+        }
+        return isVisible(el);
       });
 
-      if (isOverlap) {
-        return; // Skip duplicate / overlapping input
+    // 1. Remove indicators for inputs that are no longer eligible or no longer in DOM
+    const currentInputsSet = new Set(inputs);
+    indicatorElements = indicatorElements.filter(item => {
+      if (!currentInputsSet.has(item.target) || !document.contains(item.target)) {
+        try { item.element.remove(); } catch (_) { }
+        return false;
       }
+      return true;
+    });
 
-      placedPositions.push({ left: leftViewport, top: topViewport });
+    // 2. Add indicators for new eligible inputs
+    const existingTargets = new Set(indicatorElements.map(item => item.target));
+    let idCounter = indicatorElements.length + 1;
 
-      const id = `enhancer_${idCounter++}`;
-      input.setAttribute('data-enhancer-id', id);
+    inputs.forEach(input => {
+      if (existingTargets.has(input)) return; // Already has indicator
+
+      const parent = input.parentElement;
+      if (!parent) return;
 
       // Ensure parent container has positioning context
       try {
@@ -389,7 +534,13 @@
         if (parentStyle.position === 'static') {
           parent.style.position = 'relative';
         }
-      } catch (_) {}
+      } catch (_) { }
+
+      let id = input.getAttribute('data-enhancer-id');
+      if (!id) {
+        id = `enhancer_${idCounter++}_${Math.random().toString(36).substring(7)}`;
+        input.setAttribute('data-enhancer-id', id);
+      }
 
       const circle = document.createElement('div');
       circle.className = 'content-enhancer-circle';
@@ -433,17 +584,17 @@
         const context = {
           elementId: id,
           label: getLabel(input),
-          placeholder: input.placeholder || '',
+          placeholder: input.placeholder || input.getAttribute('placeholder') || '',
           name: input.getAttribute('name') || '',
           idAttr: input.id || '',
-          currentValue: input.value || '',
+          currentValue: (input.tagName === 'INPUT' || input.tagName === 'TEXTAREA') ? (input.value || '') : (input.innerText || input.textContent || ''),
           timestamp: Date.now()
         };
 
         // Send open side panel message synchronously in event thread to preserve user gesture
-        chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL' }).catch(() => {});
+        chrome.runtime.sendMessage({ type: 'OPEN_SIDE_PANEL' }).catch(() => { });
 
-        chrome.storage.local.set({ activeInputContext: context });
+        saveContext(context);
       });
 
       parent.appendChild(circle);
@@ -451,7 +602,6 @@
     });
 
     repositionIndicators();
-    indicatorsVisible = true;
 
     // Listen to resize and scroll
     window.removeEventListener('resize', repositionIndicators);
@@ -479,7 +629,8 @@
       // We evaluate coverage at a point offset to the left of the dot.
       // This guarantees the check falls inside the input box and does not hit the dot itself.
       const checkX = rect.left + rect.width - size - offsetRight - 20;
-      const checkY = rect.top + (input.tagName === 'TEXTAREA' ? 12 : rect.height / 2);
+      const isMultiLine = input.tagName === 'TEXTAREA' || input.tagName === 'DIV' || input.isContentEditable || input.getAttribute('contenteditable') === 'true';
+      const checkY = rect.top + (isMultiLine ? 12 : rect.height / 2);
 
       // If outside the viewport bounds, hide the dot
       if (checkY < 0 || checkY > window.innerHeight || checkX < 0 || checkX > window.innerWidth) {
@@ -497,28 +648,26 @@
             return;
           }
         }
-      } catch (_) {}
+      } catch (_) { }
 
       circle.style.display = 'block';
 
       // Position absolute relative to the parent positioned container
       try {
-        const isTextarea = input.tagName === 'TEXTAREA';
-        const top = isTextarea
-          ? input.offsetTop + 8
+        const top = isMultiLine
+          ? input.offsetTop + 12
           : input.offsetTop + (input.offsetHeight - size) / 2;
         const left = input.offsetLeft + input.offsetWidth - size - offsetRight;
 
         circle.style.top = `${top}px`;
         circle.style.left = `${left}px`;
-      } catch (_) {}
+      } catch (_) { }
     });
   }
 
   // ── Fill Value into Active Input ──────────────────────────────────────────
   const fillActiveField = (value) => {
-    chrome.storage.local.get(['activeInputContext'], (res) => {
-      const context = res.activeInputContext;
+    getContext((context) => {
       if (!context) return;
 
       let el = activeElement;
@@ -549,4 +698,180 @@
       el.style.transition = originalTransition;
     }, 1200);
   };
+
+  // ── Inject pulse animation stylesheet ─────────────────────────────────────
+  if (!document.getElementById('content-enhancer-styles')) {
+    const style = document.createElement('style');
+    style.id = 'content-enhancer-styles';
+    style.textContent = `
+      @keyframes content-enhancer-pulse {
+        from { transform: scale(1); opacity: 1; }
+        to { transform: scale(1.3); opacity: 0.5; }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  // Toggle pulse animation on the indicator icon for a given input
+  const setIndicatorLoading = (inputEl, isLoading) => {
+    if (!inputEl) return;
+    const parent = inputEl.parentElement;
+    if (!parent) return;
+    const circle = parent.querySelector('.content-enhancer-circle');
+    if (!circle) return;
+
+    if (isLoading) {
+      circle.style.animation = 'content-enhancer-pulse 0.8s infinite alternate';
+      circle.style.pointerEvents = 'none';
+    } else {
+      circle.style.animation = '';
+      circle.style.pointerEvents = 'auto';
+    }
+  };
+
+  // ── AI Call via Background Script ───────────────────────────────────────────
+  const fetchAIFromInput = (userPrompt, fieldLabel, fieldPlaceholder, existingValue) => {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({
+        type: 'GENERATE_AI',
+        prompt: userPrompt,
+        fieldLabel,
+        fieldPlaceholder,
+        existingValue
+      }, (res) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (res?.success) {
+          resolve(res.text || '');
+        } else {
+          reject(new Error(res?.error || 'AI generation failed'));
+        }
+      });
+    });
+  };
+
+  const cleanResponseText = (text) => {
+    let clean = text.trim();
+    if (clean.startsWith('```')) {
+      clean = clean.replace(/^```(?:[a-zA-Z0-9]+)?\n?/, '').replace(/\n?```$/, '');
+    }
+    if (clean.startsWith('"') && clean.endsWith('"') && clean.split('"').length === 3) {
+      clean = clean.slice(1, -1);
+    }
+    return clean.trim();
+  };
+
+  // ── Real-time input listener to update Current Text in sidepanel ──────────
+  document.addEventListener('input', (e) => {
+    if (!indicatorsVisible) return;
+    const el = getEditableElement(e.target);
+    if (!el) return;
+    if (el !== activeElement) return;
+
+    // Update the context currentValue and save to storage so sidepanel picks it up
+    const key = tabId ? `activeInputContext_${tabId}` : 'activeInputContext';
+    chrome.storage.local.get([key], (res) => {
+      const ctx = res[key];
+      if (ctx) {
+        ctx.currentValue = (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? (el.value || '') : (el.innerText || el.textContent || '');
+        chrome.storage.local.set({ [key]: ctx });
+      }
+    });
+  }, true);
+
+  // ── Intercept Enter key on inputs when extension is active ────────────────
+
+  document.addEventListener('keydown', (e) => {
+    if (!indicatorsVisible) return;
+    if (e.key !== 'Enter' || e.shiftKey) return;
+
+    const rawEl = e.target;
+    const el = getEditableElement(rawEl);
+    if (!el) return;
+    if (el.disabled || el.readOnly || el.getAttribute('contenteditable') === 'false') return;
+
+    if (el.tagName === 'INPUT') {
+      const type = (el.getAttribute('type') || '').toLowerCase().trim();
+      const allowedTypes = ['text', 'email', 'url', 'search', 'tel', ''];
+      if (!allowedTypes.includes(type)) return;
+    }
+
+    const prompt = ((el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? el.value : (el.innerText || el.textContent || '')).trim();
+    if (!prompt) return;
+    if (isGenerating) return;
+
+    // Block form submit
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+
+    isGenerating = true;
+    setIndicatorLoading(el, true);
+
+    // Make webpage input read-only during generation to prevent typing
+    setElementReadOnly(el, true);
+
+    // Notify sidepanel: generation started (disable chat input, show stop icon, pass prompt)
+    chrome.runtime.sendMessage({ type: 'INPUT_GENERATING_START', prompt: prompt }).catch(() => { });
+
+    const label = getLabel(el);
+    const placeholder = el.placeholder || el.getAttribute('placeholder') || '';
+    const currentValue = (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? (el.value || '') : (el.innerText || el.textContent || '');
+
+    fetchAIFromInput(prompt, label, placeholder, currentValue)
+      .then((rawResponse) => {
+        if (!isGenerating) return; // Exit if cancelled
+
+        const result = cleanResponseText(rawResponse);
+
+        // Remove read-only BEFORE setting value (fixes textarea fill in React)
+        setElementReadOnly(el, false);
+
+        setVal(el, result);
+        glow(el);
+
+        // Show prompt and response in sidepanel chat
+        chrome.runtime.sendMessage({
+          type: 'SHOW_CHAT_ENTRY',
+          prompt: prompt,
+          response: result
+        }).catch(() => { });
+
+        // Remove current text preview (update context with empty currentValue)
+        const key = tabId ? `activeInputContext_${tabId}` : 'activeInputContext';
+        chrome.storage.local.get([key], (res) => {
+          const ctx = res[key];
+          if (ctx) {
+            ctx.currentValue = '';
+            chrome.storage.local.set({ [key]: ctx });
+          }
+        });
+      })
+      .catch((err) => {
+        if (!isGenerating) return; // Exit if cancelled
+        console.error('[Content Enhancer] AI error:', err);
+
+        // Show error in sidepanel chat
+        chrome.runtime.sendMessage({
+          type: 'SHOW_CHAT_ENTRY',
+          prompt: prompt,
+          error: err.message
+        }).catch(() => { });
+      })
+      .finally(() => {
+        if (!isGenerating) return; // Exit if cancelled
+
+        isGenerating = false;
+        setIndicatorLoading(el, false);
+
+        // Re-enable the webpage input (in case it wasn't re-enabled in .then)
+        setElementReadOnly(el, false);
+        el.focus();
+
+        // Notify sidepanel: generation stopped (re-enable chat input, show send icon)
+        chrome.runtime.sendMessage({ type: 'INPUT_GENERATING_STOP' }).catch(() => { });
+      });
+  }, true); // capture phase to intercept before form handlers
 })();
