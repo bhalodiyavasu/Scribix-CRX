@@ -1,7 +1,3 @@
-// ── Constant Default Models ──────────────────────────────────────────────────
-const GEMINI_MODELS = ['gemini-2.5-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro'];
-const OPENROUTER_MODELS = ['openrouter/free', 'google/gemini-2.5-flash:free', 'meta-llama/llama-3-8b-instruct:free'];
-
 // Keep track of the active panel tabs in-memory
 const activePanelTabs = new Set();
 
@@ -132,6 +128,16 @@ async function fetchModelsForProvider(provider, apiKey) {
     return (data.models || [])
       .filter(m => m.name && m.name.includes('gemini') && m.supportedGenerationMethods?.includes('generateContent'))
       .map(m => m.name.replace(/^models\//, ''));
+  } else if (provider === 'GROQ') {
+    const res = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`Failed to fetch Groq models: ${res.status} - ${txt}`);
+    }
+    const data = await res.json();
+    return (data.data || []).map(m => m.id);
   } else {
     // OpenRouter
     const headers = { 'Content-Type': 'application/json' };
@@ -154,8 +160,7 @@ async function getModelsHelper(provider, customDefaultKey, customBackupKey) {
   if (customBackupKey) keysToTry.push(customBackupKey);
 
   if (keysToTry.length === 0) {
-    const fallbackModels = provider === 'GEMINI' ? GEMINI_MODELS : OPENROUTER_MODELS;
-    return { success: false, models: fallbackModels, error: 'No API keys provided. Please configure a key in the settings panel.' };
+    return { success: false, models: [], error: 'No API keys provided. Please configure a key in the settings panel.' };
   }
 
   let lastError = null;
@@ -170,8 +175,7 @@ async function getModelsHelper(provider, customDefaultKey, customBackupKey) {
     }
   }
 
-  const fallbackModels = provider === 'GEMINI' ? GEMINI_MODELS : OPENROUTER_MODELS;
-  return { success: false, models: fallbackModels, error: lastError };
+  return { success: false, models: [], error: lastError };
 }
 
 // ── Message Listener ─────────────────────────────────────────────────────────
@@ -223,14 +227,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         const settings = await chrome.storage.local.get([
           'aiProvider', 'geminiDefaultKey', 'geminiSelectedModel',
-          'openrouterDefaultKey', 'openrouterSelectedModel'
+          'openrouterDefaultKey', 'openrouterSelectedModel',
+          'groqDefaultKey', 'groqSelectedModel'
         ]);
 
         const provider = settings.aiProvider || 'GEMINI';
-        const apiKey = provider === 'GEMINI' ? settings.geminiDefaultKey : settings.openrouterDefaultKey;
+        const apiKey = provider === 'GEMINI'
+          ? settings.geminiDefaultKey
+          : (provider === 'GROQ' ? settings.groqDefaultKey : settings.openrouterDefaultKey);
         const modelName = provider === 'GEMINI'
           ? (settings.geminiSelectedModel || 'gemini-1.5-flash')
-          : (settings.openrouterSelectedModel || 'openrouter/free');
+          : (provider === 'GROQ'
+            ? (settings.groqSelectedModel || 'llama-3.1-8b-instant')
+            : (settings.openrouterSelectedModel || 'openrouter/free'));
 
         if (!apiKey) {
           sendResponse({ success: false, error: 'No API key configured' });
@@ -266,6 +275,25 @@ Existing: "${msg.existingValue || ''}"`;
           if (!res.ok) throw new Error(`API error: ${res.status}`);
           const data = await res.json();
           responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        } else if (provider === 'GROQ') {
+          const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+              model: modelName,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: `${msg.prompt}\n\n[Seed: ${randomSeed}]` }
+              ],
+              temperature: 1.0
+            })
+          });
+          if (!res.ok) throw new Error(`API error: ${res.status}`);
+          const data = await res.json();
+          responseText = data.choices?.[0]?.message?.content || '';
         } else {
           const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',

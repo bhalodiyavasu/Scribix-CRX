@@ -97,7 +97,9 @@ document.addEventListener('DOMContentLoaded', () => {
       'geminiDefaultKey',
       'geminiSelectedModel',
       'openrouterDefaultKey',
-      'openrouterSelectedModel'
+      'openrouterSelectedModel',
+      'groqDefaultKey',
+      'groqSelectedModel'
     ], (res) => {
       currentSettings = res;
 
@@ -120,7 +122,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updateProviderUI(provider) {
-    const label = provider === 'GEMINI' ? 'Google Gemini' : 'OpenRouter';
+    const label = provider === 'GEMINI' ? 'Google Gemini' : (provider === 'GROQ' ? 'Groq' : 'OpenRouter');
     providerSelectedLabel.textContent = label;
 
     // Update active class & check marks in provider dropdown menu
@@ -142,6 +144,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (provider === 'GEMINI') {
       desc.textContent = 'Your Google AI Studio API key';
       defaultKeyInput.placeholder = 'Enter your API key';
+    } else if (provider === 'GROQ') {
+      desc.textContent = 'Your Groq API key';
+      defaultKeyInput.placeholder = 'Enter your API key';
     } else {
       desc.textContent = 'Your OpenRouter API key';
       defaultKeyInput.placeholder = 'Enter your API key';
@@ -151,7 +156,9 @@ document.addEventListener('DOMContentLoaded', () => {
   function loadKeysAndFetchModels(provider) {
     const defaultKey = provider === 'GEMINI'
       ? (currentSettings.geminiDefaultKey || '')
-      : (currentSettings.openrouterDefaultKey || '');
+      : (provider === 'GROQ'
+        ? (currentSettings.groqDefaultKey || '')
+        : (currentSettings.openrouterDefaultKey || ''));
 
     defaultKeyInput.value = defaultKey;
     lastSavedKey = defaultKey;
@@ -172,7 +179,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const savedModel = provider === 'GEMINI'
           ? currentSettings.geminiSelectedModel
-          : currentSettings.openrouterSelectedModel;
+          : (provider === 'GROQ'
+            ? currentSettings.groqSelectedModel
+            : currentSettings.openrouterSelectedModel);
 
         let activeModel = '';
         if (savedModel && modelsList.includes(savedModel)) {
@@ -190,14 +199,9 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       // Mock models for static preview
       setTimeout(() => {
-        const fakeModels = provider === 'GEMINI'
-          ? ['gemini-2.5-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro']
-          : ['openrouter/free', 'google/gemini-2.5-flash:free', 'meta-llama/llama-3-8b-instruct:free'];
-
-        const activeModel = fakeModels[0];
-        modelSelectedLabel.textContent = activeModel;
-        composerActiveModel.textContent = activeModel;
-        renderModelList(fakeModels, activeModel);
+        modelSelectedLabel.textContent = 'No models available';
+        composerActiveModel.textContent = 'No model';
+        renderModelList([], '');
       }, 600);
     }
   }
@@ -272,6 +276,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (provider === 'GEMINI') {
       currentSettings.geminiSelectedModel = model;
       chrome.storage.local.set({ geminiSelectedModel: model });
+    } else if (provider === 'GROQ') {
+      currentSettings.groqSelectedModel = model;
+      chrome.storage.local.set({ groqSelectedModel: model });
     } else {
       currentSettings.openrouterSelectedModel = model;
       chrome.storage.local.set({ openrouterSelectedModel: model });
@@ -405,6 +412,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (provider === 'GEMINI') {
       currentSettings.geminiDefaultKey = val;
       chrome.storage.local.set({ geminiDefaultKey: val }, () => {
+        lastSavedKey = val;
+        fetchModels(provider, val);
+        showToast('Settings saved');
+      });
+    } else if (provider === 'GROQ') {
+      currentSettings.groqDefaultKey = val;
+      chrome.storage.local.set({ groqDefaultKey: val }, () => {
         lastSavedKey = val;
         fetchModels(provider, val);
         showToast('Settings saved');
@@ -813,12 +827,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const provider = currentSettings.aiProvider || 'GEMINI';
     const apiKey = provider === 'GEMINI'
       ? currentSettings.geminiDefaultKey
-      : currentSettings.openrouterDefaultKey;
+      : (provider === 'GROQ'
+        ? currentSettings.groqDefaultKey
+        : currentSettings.openrouterSelectedModel); // Wait, should be openrouterDefaultKey
+    // Let's write it cleanly:
+    const apiKeyCorrect = provider === 'GEMINI'
+      ? currentSettings.geminiDefaultKey
+      : (provider === 'GROQ'
+        ? currentSettings.groqDefaultKey
+        : currentSettings.openrouterDefaultKey);
     const modelName = provider === 'GEMINI'
       ? (currentSettings.geminiSelectedModel || 'gemini-1.5-flash')
-      : (currentSettings.openrouterSelectedModel || 'openrouter/free');
+      : (provider === 'GROQ'
+        ? (currentSettings.groqSelectedModel || 'llama-3.1-8b-instant')
+        : (currentSettings.openrouterSelectedModel || 'openrouter/free'));
 
-    if (!apiKey) {
+    if (!apiKeyCorrect) {
       throw new Error('Please configure an API Key in settings first.');
     }
 
@@ -841,7 +865,7 @@ Existing: "${existingValue}"`;
     const randomSeed = Math.random().toString(36).substring(7);
 
     if (provider === 'GEMINI') {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKeyCorrect}`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -867,13 +891,39 @@ Existing: "${existingValue}"`;
       const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
       return cleanResponseText(responseText);
 
+    } else if (provider === 'GROQ') {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKeyCorrect}`
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `${userPrompt}\n\n[Seed: ${randomSeed}]` }
+          ],
+          temperature: 1.0
+        })
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Groq API error: ${res.status} - ${txt}`);
+      }
+
+      const data = await res.json();
+      const responseText = data.choices?.[0]?.message?.content || '';
+      return cleanResponseText(responseText);
+
     } else {
       // OpenRouter
       const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
+          'Authorization': `Bearer ${apiKeyCorrect}`,
           'HTTP-Referer': 'https://github.com/vasubhalodiya',
           'X-Title': 'Scribix'
         },

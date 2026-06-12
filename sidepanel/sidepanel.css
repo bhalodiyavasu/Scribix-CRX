@@ -673,6 +673,9 @@ body {
 }
 
 .chevron-icon {
+  width: 14px !important;
+  height: 14px !important;
+  flex: none !important;
   transition: transform 0.2s ease;
   flex-shrink: 0;
   opacity: 0.6;
