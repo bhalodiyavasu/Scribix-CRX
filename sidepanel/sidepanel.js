@@ -494,7 +494,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('target-context-bar').style.display = 'none';
     }
 
-    if (context.currentValue) {
+    if (context.currentValue && context.currentValue.trim()) {
       originalTextContent.textContent = context.currentValue;
       originalTextPreview.classList.remove('hidden');
     } else {

@@ -168,8 +168,19 @@
   };
 
   const handleElementFocus = async (rawEl) => {
+    if (rawEl && (
+      rawEl.classList.contains('content-enhancer-circle') || 
+      (rawEl.tagName === 'IMG' && rawEl.parentElement && rawEl.parentElement.classList.contains('content-enhancer-circle'))
+    )) {
+      return;
+    }
+
     const el = getEditableElement(rawEl);
-    if (!el) return;
+    if (!el) {
+      activeElement = null;
+      await saveContext(null);
+      return;
+    }
     if (el.disabled || el.readOnly || el.getAttribute('contenteditable') === 'false') return;
     if (el.tagName === 'INPUT') {
       const type = (el.getAttribute('type') || '').toLowerCase().trim();
@@ -197,8 +208,32 @@
     await saveContext(context);
   };
 
+  const handleElementInput = async (rawEl) => {
+    const el = getEditableElement(rawEl);
+    if (!el) return;
+    if (el.disabled || el.readOnly || el.getAttribute('contenteditable') === 'false') return;
+    if (el.tagName === 'INPUT') {
+      const type = (el.getAttribute('type') || '').toLowerCase().trim();
+      const allowedTypes = ['text', 'email', 'url', 'search', 'tel', ''];
+      if (!allowedTypes.includes(type)) return;
+    }
+
+    const id = el.getAttribute('data-enhancer-id');
+    if (!id) return;
+
+    getContext(async (currentContext) => {
+      if (currentContext && currentContext.elementId === id) {
+        const value = (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? (el.value || '') : (el.innerText || el.textContent || '');
+        currentContext.currentValue = value;
+        currentContext.timestamp = Date.now();
+        await saveContext(currentContext);
+      }
+    });
+  };
+
   document.addEventListener('focusin', (e) => handleElementFocus(e.target));
   document.addEventListener('click', (e) => handleElementFocus(e.target));
+  document.addEventListener('input', (e) => handleElementInput(e.target));
 
   const setVal = (el, val) => {
     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {

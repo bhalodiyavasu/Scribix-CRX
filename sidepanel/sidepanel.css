@@ -489,6 +489,14 @@ body {
   padding: 0px 6px;
 }
 
+.action-dot-model-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  flex-shrink: 0;
+}
+
 .action-dot-model-text {
   flex: 1;
   min-width: 0;
